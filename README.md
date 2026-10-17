@@ -2,7 +2,7 @@
 
 to get dataset:
 
-bash '''
+'''bash
 cd scripts
 python download_dataset.py
 '''
