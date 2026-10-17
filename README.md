@@ -2,9 +2,8 @@
 
 to get dataset:
 
-'''bash
+```bash
+pip install -r requirements.txt
 cd scripts
 python download_dataset.py
-'''
-
-still need requirements.txt
+```
