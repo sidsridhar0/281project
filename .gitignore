@@ -1,0 +1,12 @@
+# dataset - get it with scripts/download_dataset.py
+data/
+*.part
+
+# python / jupyter
+__pycache__/
+.ipynb_checkpoints/
+.venv/
+venv/
+
+# OS
+.DS_Store
