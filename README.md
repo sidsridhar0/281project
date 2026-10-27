@@ -51,7 +51,10 @@ Re-running `1-preprocessing.ipynb` deletes and rebuilds `data/processed/`, inclu
 
 1. **Labels:** loads the Gemini `Scale` labels and drops the two maps the authors exclude (2,620 images left).
 2. **Works:** normalizes MARC title + author into a work key, so different libraries' scans of the same novel match. 1,555 scanned volumes collapse to 1,024 works.
-3. **Duplicates:** finds scans of the same printed map with a perceptual hash (pHash). 276 maps have 2+ scans (930 images; one map has 47). Each map keeps its largest scan, labeled by majority vote of its copies.
+3. **Duplicates:** finds scans of the same printed map with a perceptual hash (pHash). 276 maps have 2+ scans (930 images; one map has 47). Each map keeps its largest scan as its "kept scan".
+   - **One label per map.** Scale is a property of the printed map, not of a scan, so every row of a map gets the same label: the majority vote of Gemini's labels across all its scans. That covers its kept scan, its rescans, and its augmented copies. Ties go to the kept scan's own Gemini label.
+   - Gemini disagreed with itself on 91 of the 276 maps. Its original per-scan labels stay in `duplicates.csv` as `label_original`, with `label_conflict` marking those maps.
+   - The vote is only as good as the merge: if two different maps were wrongly merged, one gets the other's label. Check merges with the review tools in section 4.
 4. **Split:** a group is everything linked by "same work" or "same map". Groups are split 70 / 15 / 15, so a group never spans two splits, and the class mix stays about equal across splits.
 5. **Images:** pads each image (no stretching) to the train median aspect ratio, resizes to 673 x 1024, applies light denoising, and saves a PNG.
 6. **Rescans:** for maps in train, up to 4 of their other scans come back as extra training rows ("natural augmentation", 402 rescans). Val and test keep exactly one scan per map.
@@ -141,7 +144,7 @@ maps = m[m["variant"] == "original"]   # one row per map - PCA, t-SNE, dataset p
 | `augmented` | train | A synthetic copy, from `2-augment.ipynb` |
 
 Other useful columns:
-- `label` (0/1/2) and `label_name`
+- `label` (0/1/2) and `label_name`: the map's majority-vote label, the same on every row of that map
 - `source_id`: the map's kept scan, the same for all of that map's rows
 - `group_id`: use with `GroupKFold` if you cross-validate inside train
 - `fictionality`: real or fictional place, from Gemini
