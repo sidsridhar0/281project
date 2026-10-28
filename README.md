@@ -55,9 +55,17 @@ Re-running `1-preprocessing.ipynb` deletes and rebuilds `data/processed/`, inclu
    - **One label per map.** Scale is a property of the printed map, not of a scan, so every row of a map gets the same label: the majority vote of Gemini's labels across all its scans. That covers its kept scan, its rescans, and its augmented copies. Ties go to the kept scan's own Gemini label.
    - Gemini disagreed with itself on 91 of the 276 maps. Its original per-scan labels stay in `duplicates.csv` as `label_original`, with `label_conflict` marking those maps.
    - The vote is only as good as the merge: if two different maps were wrongly merged, one gets the other's label. Check merges with the review tools in section 4.
-4. **Split:** a group is everything linked by "same work" or "same map". Groups are split 70 / 15 / 15, so a group never spans two splits, and the class mix stays about equal across splits.
-5. **Images:** turns landscape fold-outs to portrait, pads each image (no stretching) to the train median aspect ratio, resizes to 674 x 1024, applies light denoising, and saves a PNG.
-6. **Rescans:** other scans of train maps come back as extra training rows ("natural augmentation"): up to 8 per map for Small and Medium, none for Large (`MAX_RESCANS_PER_MAP`). The real variation goes where the data is thin instead of widening the imbalance. Rescans carry no augmentation artifacts, so giving them to only some classes doesn't create a shortcut. Val and test keep exactly one scan per map. This gives 163 rescans: 23 for Small (every extra Small scan that exists) and 140 for Medium.
+4. **Split:** scans are linked into groups in three ways (table below). 628 scan pairs fall between the two hash thresholds, and 67 of those near-duplicate links joined groups that would otherwise have been separate, leaving 785 groups; the largest holds 3% of the maps. Groups are split 70 / 15 / 15, so a group never spans two splits, and the class mix stays about equal across splits.
+5. **Images:** turns landscape fold-outs to portrait, pads each image (no stretching) to the train median aspect ratio, resizes to 672 x 1024, applies light denoising, and saves a PNG.
+6. **Rescans:** other scans of train maps come back as extra training rows ("natural augmentation"): up to 8 per map for Small and Medium, none for Large (`MAX_RESCANS_PER_MAP`). The real variation goes where the data is thin instead of widening the imbalance. Rescans carry no augmentation artifacts, so giving them to only some classes doesn't create a shortcut. Val and test keep exactly one scan per map. This gives 162 rescans: 24 for Small (every extra Small scan that exists) and 138 for Medium.
+
+How scans are linked. Both hash links compare images only, regardless of which book they're from; an author alone is never a link.
+
+| Link | Based on | Effect |
+|---|---|---|
+| Same map (pHash distance 10 or less, `PHASH_MAX_DIST`) | image | merged into one map with one label; extra scans become train rescans or are dropped from val/test |
+| Near-duplicate (distance 11-12, `GROUP_MAX_DIST`) | image | same split only - probably the same map, but not certain enough to merge |
+| Same work (title + author) | MARC metadata | same split only - covers different maps from one book, and copies the hash missed |
 
 | Maps per split | Small | Medium | Large | Total |
 |---|---|---|---|---|
@@ -65,7 +73,7 @@ Re-running `1-preprocessing.ipynb` deletes and rebuilds `data/processed/`, inclu
 | val | 26 | 53 | 213 | 292 |
 | test | 25 | 53 | 212 | 290 |
 
-Settings live in the second cell: split fractions, `PHASH_MAX_DIST` (duplicate threshold), `RESCANS_AS_AUGMENTATION`, `MAX_RESCANS_PER_MAP`, `TARGET_HEIGHT`, `ROTATE_LANDSCAPE`, `DENOISE_STRENGTH`, `EXCLUDE_WORKS`. After changing `PHASH_MAX_DIST`, check the merges in section 4: there's a sheet of borderline pairs on both sides of the threshold, and a pager through every merged map, most suspicious first.
+Settings live in the second cell: split fractions, `PHASH_MAX_DIST` (duplicate threshold), `GROUP_MAX_DIST` (same-split threshold), `RESCANS_AS_AUGMENTATION`, `MAX_RESCANS_PER_MAP`, `TARGET_HEIGHT`, `ROTATE_LANDSCAPE`, `DENOISE_STRENGTH`, `EXCLUDE_WORKS`. After changing `PHASH_MAX_DIST`, check the merges in section 4: there's a sheet of borderline pairs on both sides of the threshold, and a pager through every merged map, most suspicious first.
 
 ### 2-augment.ipynb
 
@@ -77,8 +85,8 @@ Settings live in the second cell: split fractions, `PHASH_MAX_DIST` (duplicate t
 | Train rows | Small | Medium | Large | Total |
 |---|---|---|---|---|
 | original (kept scans) | 118 | 248 | 992 | 1,358 |
-| rescan | 23 | 140 | 0 | 163 |
-| augmented | 449 | 852 | 248 | 1,549 |
+| rescan | 24 | 138 | 0 | 162 |
+| augmented | 448 | 854 | 248 | 1,550 |
 | **total** | **590** | **1,240** | **1,240** | **3,070** |
 
 Medium and Large finish even. Small stops at 590: it has only 118 train maps, each capped at 5 samples, and no Small map had more than 4 extra scans. Use `class_weight="balanced"` in the classifiers to cover the rest.
@@ -156,7 +164,7 @@ Fit anything learned from data (scalers, PCA) on the train split only.
 
 ## Notes
 
-- **Split by group, not by image.** Many novels were scanned more than once (Treasure Island has 23 copies), and collected editions reprint the same maps under other titles. Grouping by work and by duplicate map keeps every copy in one split, which is what prevents train/test leakage. Stratification only balances the class mix; dedup only controls how much each map counts.
+- **Split by group, not by image.** Many novels were scanned more than once (Treasure Island has 23 copies), and collected editions reprint the same maps under other titles. Grouping by work, by duplicate map, and by near-duplicate keeps every copy in one split, which is what prevents train/test leakage. Stratification only balances the class mix; dedup only controls how much each map counts.
 - **The labels come from Gemini, not human annotators.** For 91 of the 276 maps with several scans (33%), Gemini gave different scans different labels. We use the majority vote, but this is real label noise and a limitation to discuss. `duplicates.csv` and the manifest's `label_conflict` column flag these maps.
 - **Book IDs:** the book ID is the filename prefix before the page number, e.g. `000001112276` in `000001112276_00000151.jpg`.
 - **Very large images:** a few fold-out maps are over 100 megapixels. Pillow warns about them as possible "decompression bombs"; the notebooks turn that guard off, since this is a trusted dataset.
