@@ -6,11 +6,11 @@ We classify the geographic scale of maps scanned from fiction published 1800-192
 
 | Class | Label | Examples | Images | Distinct maps |
 |---|---|---|---|---|
-| 0 | Small | estates, buildings, floor plans | 210 (8%) | 172 (9%) |
-| 1 | Medium | cities, towns | 553 (21%) | 359 (18%) |
-| 2 | Large | regions, countries, continents | 1,859 (71%) | 1,435 (73%) |
+| 0 | Small | estates, buildings, floor plans | 210 (8%) | 169 (9%) |
+| 1 | Medium | cities, towns | 553 (21%) | 354 (18%) |
+| 2 | Large | regions, countries, continents | 1,859 (71%) | 1,417 (73%) |
 
-"Images" counts every scan in the dataset, including the two the authors say to exclude. "Distinct maps" is what's left after merging duplicate scans of the same map (see [Preprocessing](#1-preprocessingipynb)).
+"Images" counts every scan in the dataset. "Distinct maps" (1,940) is what's left after dropping excluded scans and merging duplicate scans of the same map (see [Preprocessing](#1-preprocessingipynb)).
 
 Dataset: "Castles, Battlefields, and Continents" (Bax, Mimno, and Wilkens, 2025) - [data on eCommons](https://ecommons.cornell.edu/items/6d470f13-bac5-4b0e-94f2-4eac93d677cb), [paper](https://doi.org/10.63744/oYbvYsUA743D)
 
@@ -49,32 +49,39 @@ Re-running `1-preprocessing.ipynb` deletes and rebuilds `data/processed/`, inclu
 
 ### 1-preprocessing.ipynb
 
-1. **Labels:** loads the Gemini `Scale` labels and drops the two maps the authors exclude (2,620 images left).
-2. **Works:** normalizes MARC title + author into a work key, so different libraries' scans of the same novel match. 1,555 scanned volumes collapse to 1,024 works.
+1. **Labels:** loads the Gemini `Scale` labels and drops the two maps the authors exclude, plus whole books listed in `EXCLUDE_WORKS`: by default a city traffic survey (26 images) that isn't fiction. 2,594 images are left.
+2. **Works:** normalizes MARC title + author into a work key, so different libraries' scans of the same novel match. 1,554 scanned volumes collapse to 1,023 works.
 3. **Duplicates:** finds scans of the same printed map with a perceptual hash (pHash). 276 maps have 2+ scans (930 images; one map has 47). Each map keeps its largest scan as its "kept scan".
    - **One label per map.** Scale is a property of the printed map, not of a scan, so every row of a map gets the same label: the majority vote of Gemini's labels across all its scans. That covers its kept scan, its rescans, and its augmented copies. Ties go to the kept scan's own Gemini label.
    - Gemini disagreed with itself on 91 of the 276 maps. Its original per-scan labels stay in `duplicates.csv` as `label_original`, with `label_conflict` marking those maps.
    - The vote is only as good as the merge: if two different maps were wrongly merged, one gets the other's label. Check merges with the review tools in section 4.
 4. **Split:** a group is everything linked by "same work" or "same map". Groups are split 70 / 15 / 15, so a group never spans two splits, and the class mix stays about equal across splits.
-5. **Images:** pads each image (no stretching) to the train median aspect ratio, resizes to 673 x 1024, applies light denoising, and saves a PNG.
-6. **Rescans:** other scans of train maps come back as extra training rows ("natural augmentation"): up to 8 per map for Small and Medium, none for Large (`MAX_RESCANS_PER_MAP`). The real variation goes where the data is thin instead of widening the imbalance. Rescans carry no augmentation artifacts, so giving them to only some classes doesn't create a shortcut. Val and test keep exactly one scan per map.
+5. **Images:** turns landscape fold-outs to portrait, pads each image (no stretching) to the train median aspect ratio, resizes to 674 x 1024, applies light denoising, and saves a PNG.
+6. **Rescans:** other scans of train maps come back as extra training rows ("natural augmentation"): up to 8 per map for Small and Medium, none for Large (`MAX_RESCANS_PER_MAP`). The real variation goes where the data is thin instead of widening the imbalance. Rescans carry no augmentation artifacts, so giving them to only some classes doesn't create a shortcut. Val and test keep exactly one scan per map. This gives 163 rescans: 23 for Small (every extra Small scan that exists) and 140 for Medium.
 
 | Maps per split | Small | Medium | Large | Total |
 |---|---|---|---|---|
-| train | 120 | 251 | 1,005 | 1,376 |
-| val | 26 | 54 | 215 | 295 |
-| test | 26 | 54 | 215 | 295 |
+| train | 118 | 248 | 992 | 1,358 |
+| val | 26 | 53 | 213 | 292 |
+| test | 25 | 53 | 212 | 290 |
 
-Settings live in the second cell: split fractions, `PHASH_MAX_DIST` (duplicate threshold), `RESCANS_AS_AUGMENTATION`, `MAX_RESCANS_PER_MAP`, `TARGET_HEIGHT`, `ROTATE_LANDSCAPE`, `DENOISE_STRENGTH`. After changing `PHASH_MAX_DIST`, check the merges in section 4: there's a sheet of borderline pairs, and a pager through every merged map, most suspicious first.
+Settings live in the second cell: split fractions, `PHASH_MAX_DIST` (duplicate threshold), `RESCANS_AS_AUGMENTATION`, `MAX_RESCANS_PER_MAP`, `TARGET_HEIGHT`, `ROTATE_LANDSCAPE`, `DENOISE_STRENGTH`, `EXCLUDE_WORKS`. After changing `PHASH_MAX_DIST`, check the merges in section 4: there's a sheet of borderline pairs on both sides of the threshold, and a pager through every merged map, most suspicious first.
 
 ### 2-augment.ipynb
 
 - **How many copies:** tops each class up toward the size of the largest one, counting rescans and the largest class's own minimum copies. Copies go first to the maps with the fewest samples, and synthetic copies never take a map past 5 samples. A map with more rescans than that keeps them but gets no synthetic copies.
 - **Large gets copies too:** every class, Large included, gets copies for at least 25% of its maps. Otherwise augmentation artifacts would only appear in Small and Medium and become a shortcut for predicting them.
-- **Transforms:** all scale-preserving. Flips, a tilt of up to 5 deg, zoom of up to 7%, shift of up to 4%, contrast and brightness. No big zooms, since how zoomed-in a map looks is what we're classifying.
+- **Transforms:** all scale-preserving. Flips, a tilt of up to 2 deg (more would push floor-plan walls out of the 0/90 deg HOG bins that identify Small), zoom of up to 7%, shift of up to 4%, contrast and brightness. No big zooms, since how zoomed-in a map looks is what we're classifying.
 - **Safe to re-run:** the previous augmentation is replaced, never added to.
 
-Section 7 prints the final train composition by class and variant. Expect Medium and Large to end up about even (around 1,256 rows each: Large is its 1,005 maps plus 251 synthetic copies). Small stays near 600, because it has only 120 train maps and few of them were reprinted. Use `class_weight="balanced"` in the classifiers to cover the rest.
+| Train rows | Small | Medium | Large | Total |
+|---|---|---|---|---|
+| original (kept scans) | 118 | 248 | 992 | 1,358 |
+| rescan | 23 | 140 | 0 | 163 |
+| augmented | 449 | 852 | 248 | 1,549 |
+| **total** | **590** | **1,240** | **1,240** | **3,070** |
+
+Medium and Large finish even. Small stops at 590: it has only 118 train maps, each capped at 5 samples, and no Small map had more than 4 extra scans. Use `class_weight="balanced"` in the classifiers to cover the rest.
 
 ### Features
 
