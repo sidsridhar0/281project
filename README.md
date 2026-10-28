@@ -57,7 +57,7 @@ Re-running `1-preprocessing.ipynb` deletes and rebuilds `data/processed/`, inclu
    - The vote is only as good as the merge: if two different maps were wrongly merged, one gets the other's label. Check merges with the review tools in section 4.
 4. **Split:** a group is everything linked by "same work" or "same map". Groups are split 70 / 15 / 15, so a group never spans two splits, and the class mix stays about equal across splits.
 5. **Images:** pads each image (no stretching) to the train median aspect ratio, resizes to 673 x 1024, applies light denoising, and saves a PNG.
-6. **Rescans:** for maps in train, up to 4 of their other scans come back as extra training rows ("natural augmentation", 402 rescans). Val and test keep exactly one scan per map.
+6. **Rescans:** other scans of train maps come back as extra training rows ("natural augmentation"): up to 8 per map for Small and Medium, none for Large (`MAX_RESCANS_PER_MAP`). The real variation goes where the data is thin instead of widening the imbalance. Rescans carry no augmentation artifacts, so giving them to only some classes doesn't create a shortcut. Val and test keep exactly one scan per map.
 
 | Maps per split | Small | Medium | Large | Total |
 |---|---|---|---|---|
@@ -69,19 +69,12 @@ Settings live in the second cell: split fractions, `PHASH_MAX_DIST` (duplicate t
 
 ### 2-augment.ipynb
 
-- **How many copies:** tops each class up toward the size of the largest one, counting rescans. No map gets more than 4 extra samples, rescans and synthetic copies combined, and copies go first to the maps with the fewest samples.
+- **How many copies:** tops each class up toward the size of the largest one, counting rescans and the largest class's own minimum copies. Copies go first to the maps with the fewest samples, and synthetic copies never take a map past 5 samples. A map with more rescans than that keeps them but gets no synthetic copies.
 - **Large gets copies too:** every class, Large included, gets copies for at least 25% of its maps. Otherwise augmentation artifacts would only appear in Small and Medium and become a shortcut for predicting them.
 - **Transforms:** all scale-preserving. Flips, a tilt of up to 5 deg, zoom of up to 7%, shift of up to 4%, contrast and brightness. No big zooms, since how zoomed-in a map looks is what we're classifying.
 - **Safe to re-run:** the previous augmentation is replaced, never added to.
 
-| Train rows | Small | Medium | Large | Total |
-|---|---|---|---|---|
-| original (kept scans) | 120 | 251 | 1,005 | 1,376 |
-| rescan | 19 | 109 | 274 | 402 |
-| augmented | 461 | 895 | 251 | 1,607 |
-| **total** | **600** | **1,255** | **1,530** | **3,385** |
-
-Small and Medium hit the per-map cap before reaching Large, so train is still somewhat imbalanced. Use `class_weight="balanced"` in the classifiers to cover the rest.
+Section 7 prints the final train composition by class and variant. Expect Medium and Large to end up about even (around 1,256 rows each: Large is its 1,005 maps plus 251 synthetic copies). Small stays near 600, because it has only 120 train maps and few of them were reprinted. Use `class_weight="balanced"` in the classifiers to cover the rest.
 
 ### Features
 
