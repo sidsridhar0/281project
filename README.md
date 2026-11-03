@@ -162,6 +162,17 @@ Other useful columns:
 
 Fit anything learned from data (scalers, PCA) on the train split only.
 
+### 3-simple_model.ipynb
+
+Baseline: multinomial logistic regression (no hidden layers) on simple features that summarize brightness, ink and color, with no edges or texture.
+- **Features tried:** `pixels_32` (32 x 48 thumbnail), `hist_norm` (brightness histogram after contrast-stretching), `ink` (Otsu ink fraction, overall + 6 x 4 grid), `color` (saturation beyond the paper's tint), and `combo` (hist_norm + ink + color, 76 numbers).
+- **Tuning:** C chosen on the validation set for each feature; test used once at the end.
+- **Chosen model:** `combo`, C = 0.22, no class weighting, trained on all train rows.
+- **Results:** val macro-F1 0.40, test macro-F1 0.33 (chance 0.26). Small is never predicted correctly (F1 0.00).
+- **Cost:** about 27 ms per image, almost all of it computing features; fitting takes under 0.1 s.
+
+Takes several minutes to run, mostly computing features.
+
 ## Notes
 
 - **Split by group, not by image.** Many novels were scanned more than once (Treasure Island has 23 copies), and collected editions reprint the same maps under other titles. Grouping by work, by duplicate map, and by near-duplicate keeps every copy in one split, which is what prevents train/test leakage. Stratification only balances the class mix; dedup only controls how much each map counts.
@@ -178,3 +189,4 @@ Fit anything learned from data (scalers, PCA) on the train split only.
 - `scripts/2-augment.ipynb` - minority-class augmentation of the train split
 - `scripts/feature_checkpoint.ipynb` - proof-of-concept HOG, LBP, and line/corner features
 - `scripts/feature_checkpoint.pptx` - feature checkpoint slides
+- `scripts/3-simple_model.ipynb` - simple-feature baseline (logistic regression)
