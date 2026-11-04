@@ -44,6 +44,7 @@ Run the notebooks in `scripts/` in number order. All of them find the repo root 
 | `1-preprocessing.ipynb` | De-duplicates, splits, pads/resizes/denoises -> `data/processed/` and `manifest.csv` |
 | `2-augment.ipynb` | Oversamples the minority classes in train |
 | `feature_checkpoint.ipynb` | Proof-of-concept features on three sample maps (see [Features](#features)) |
+| `3-simple_model.ipynb` | Baselines (majority class, random guessing), then logistic regression on brightness/ink/color features |
 
 Re-running `1-preprocessing.ipynb` deletes and rebuilds `data/processed/`, including the augmentation, so run `2-augment.ipynb` again afterwards. Preprocessing takes a few minutes, mostly in the denoising step.
 
@@ -164,14 +165,20 @@ Fit anything learned from data (scalers, PCA) on the train split only.
 
 ### 3-simple_model.ipynb
 
-Baseline: multinomial logistic regression (no hidden layers) on simple features that summarize brightness, ink and color, with no edges or texture.
+Asks whether features that say nothing about what is drawn (brightness, amount of ink, color) predict scale any better than guessing.
+
+**Part 1 - baselines (no features).** Both learn only the class mix, from one row per train map, since the full train split is rebalanced. They have nothing to tune, so they are scored on val and test directly.
+- **Majority class:** always predicts Large. About 73% accuracy but only about 0.28 macro-F1, since Small and Medium score 0.
+- **Random guessing** in proportion to the real class mix, averaged over 1,000 random runs: about 0.33 macro-F1, with 95% of runs between about 0.28 and 0.39 on test. This is the bar a model has to clear.
+- Don't fit `DummyClassifier(strategy="most_frequent")` on all train rows: augmentation ties Medium with Large (1,240 rows each), the tie goes to the first class, and it predicts Medium.
+
+**Part 2 - logistic regression (no hidden layers) on simple features**, no edges or texture.
 - **Features tried:** `pixels_32` (32 x 48 thumbnail), `hist_norm` (brightness histogram after contrast-stretching), `ink` (Otsu ink fraction, overall + 6 x 4 grid), `color` (saturation beyond the paper's tint), and `combo` (hist_norm + ink + color, 76 numbers).
-- **Tuning:** C chosen on the validation set for each feature; test used once at the end.
-- **Chosen model:** `combo`, C = 0.22, no class weighting, trained on all train rows.
-- **Results:** val macro-F1 0.40, test macro-F1 0.33 (chance 0.26). Small is never predicted correctly (F1 0.00).
+- **Tuning:** feature, class weighting (none or `balanced`) and C, all chosen on the validation set; test used once at the end. Picking the best of 130 settings on one val set is optimistic, so val scores run high.
+- **Results (11/2 run, before class weighting was added to the search - re-run to refresh):** `combo`, C = 0.22, no class weighting. Val macro-F1 0.40, test macro-F1 0.33 (bootstrap 95% CI 0.29 - 0.37), test accuracy 57%. Test macro-F1 is inside the random-guessing range, and Small is never predicted correctly (F1 0.00). These features carry essentially no information about scale - the point of the baseline.
 - **Cost:** about 27 ms per image, almost all of it computing features; fitting takes under 0.1 s.
 
-Takes several minutes to run, mostly computing features.
+Takes several minutes to run, mostly computing features and the 130-fit search.
 
 ## Notes
 
@@ -189,4 +196,4 @@ Takes several minutes to run, mostly computing features.
 - `scripts/2-augment.ipynb` - minority-class augmentation of the train split
 - `scripts/feature_checkpoint.ipynb` - proof-of-concept HOG, LBP, and line/corner features
 - `scripts/feature_checkpoint.pptx` - feature checkpoint slides
-- `scripts/3-simple_model.ipynb` - simple-feature baseline (logistic regression)
+- `scripts/3-simple_model.ipynb` - baselines (majority class, random guessing) and simple-feature logistic regression
