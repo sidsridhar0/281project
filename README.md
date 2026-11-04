@@ -174,8 +174,9 @@ Asks whether features that say nothing about what is drawn (brightness, amount o
 
 **Part 2 - logistic regression (no hidden layers) on simple features**, no edges or texture.
 - **Features tried:** `pixels_32` (32 x 48 thumbnail), `hist_norm` (brightness histogram after contrast-stretching), `ink` (Otsu ink fraction, overall + 6 x 4 grid), `color` (saturation beyond the paper's tint), and `combo` (hist_norm + ink + color, 76 numbers).
-- **Tuning:** feature, class weighting (none or `balanced`) and C, all chosen on the validation set; test used once at the end. Picking the best of 130 settings on one val set is optimistic, so val scores run high.
-- **Results (11/2 run, before class weighting was added to the search - re-run to refresh):** `combo`, C = 0.22, no class weighting. Val macro-F1 0.40, test macro-F1 0.33 (bootstrap 95% CI 0.29 - 0.37), test accuracy 57%. Test macro-F1 is inside the random-guessing range, and Small is never predicted correctly (F1 0.00). These features carry essentially no information about scale - the point of the baseline.
+- **Tuning:** feature, class weighting (none or `balanced`) and C, all chosen on the validation set; test used once at the end. Picking the best of 130 settings on one val set can be optimistic.
+- **Results (11/4 run):** `combo`, no class weighting, C = 0.22. Balanced weighting lost for every feature (best: 0.31 on val). Val macro-F1 0.376, test macro-F1 0.385 (bootstrap 95% CI 0.33 - 0.44), test accuracy 61%. That is at the top edge of the random-guessing range: only about 4% of random runs score that high, so it is a weak signal at best.
+- **Per class (test F1, model vs. random guessing):** Medium 0.36 vs 0.18 - nearly all of the edge, likely because city maps carry the most ink. Large 0.74 vs 0.73, no better than guessing. Small 0.05 vs 0.09, worse (1 of 25 correct): floor plans differ in structure (straight walls, right angles), which these features can't see. Structure-based features (HOG, LBP, lines) are what should separate them.
 - **Cost:** about 27 ms per image, almost all of it computing features; fitting takes under 0.1 s.
 
 Takes several minutes to run, mostly computing features and the 130-fit search.
