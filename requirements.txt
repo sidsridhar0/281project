@@ -7,3 +7,5 @@ jupyter>=1.0
 ipykernel>=6.0
 opencv-python>=4.9
 scikit-learn>=1.4
+torch>=2.0
+torchvision>=0.15
