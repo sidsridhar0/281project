@@ -41,12 +41,29 @@ Run the notebooks in `scripts/` in number order. All of them find the repo root 
 |---|---|
 | `0-Cierra_EDA.ipynb` | Image sizes, channels, class balance (optional) |
 | `0-Cierra_Duplicate_Check.ipynb` | Finds works scanned more than once, from the MARC metadata (optional) |
-| `1-preprocessing.ipynb` | De-duplicates, splits, pads/resizes/denoises -> `data/processed/` and `manifest.csv` |
-| `2-augment.ipynb` | Oversamples the minority classes in train |
+| `1-preprocessing.ipynb` | De-duplicates, splits (using the frozen split in `splits/`), pads/resizes/denoises -> `data/processed/` and `manifest.csv` |
+| `2-augment.ipynb` | Grows train to about 5,000 rows with synthetic copies, equal per class |
 | `feature_checkpoint.ipynb` | Proof-of-concept features on three sample maps (see [Features](#features)) |
 | `3-simple_model.ipynb` | Baselines (majority class, random guessing), then logistic regression on brightness/ink/color features |
+| `4-pretrained_feature.ipynb` | ResNet-50 (ImageNet) embeddings + logistic regression |
+| `5-DINOv2.ipynb` | DINOv2 embeddings + logistic regression, compared with ResNet-50 |
+| `6-DINOv3.ipynb` | DINOv3 embeddings + logistic regression, compared with DINOv2 and ResNet-50 |
 
-Re-running `1-preprocessing.ipynb` deletes and rebuilds `data/processed/`, including the augmentation, so run `2-augment.ipynb` again afterwards. Preprocessing takes a few minutes, mostly in the denoising step.
+Re-running `1-preprocessing.ipynb` deletes and rebuilds `data/processed/`, including the augmentation, so run `2-augment.ipynb` again afterwards. Preprocessing takes a few minutes, mostly in the denoising step. Notebooks 4-6 save embeddings in `data/features/` and reuse them only while the manifest and the images they were made from are unchanged; after re-running 1 or 2 they recompute on their own.
+
+### The same split on every machine
+
+Duplicate detection hashes every scan, and a different Pillow or OpenCV version, or a different CPU, can nudge a hash by a couple of bits. Near the threshold that changes which scans count as one map, and the greedy split can then shift (two of our runs on different laptops ended up with different val and test sets). So the split is decided once and committed to git in `splits/`:
+
+- **`splits/frozen_split.csv`** - one row per input scan: how it's used (`original`, `rescan` or `unused`), its map (`source_id`), voted label, group and split, plus its pixel size.
+- **`splits/frozen_split.json`** - the split fingerprint, the settings that made the split, and the package versions.
+
+How it works:
+- **If `splits/` is missing,** `1-preprocessing` computes the split and writes both files at the end. Commit them: `git add splits/ && git commit -m "Freeze the train/val/test split"`.
+- **If `splits/` is there (the normal case),** `1-preprocessing` still hashes and splits, for the figures and as a check, then uses the frozen decisions for everything. It prints how far this machine's own result was from the frozen one, which is only information. It stops with an error if the raw download doesn't match the frozen file (missing or extra scans, or different image sizes), or if any image fails to process.
+- **To change the split on purpose** (new `EXCLUDE` entries, other thresholds), set `REBUILD_SPLIT = True`, run, commit the new `splits/`, and tell the team.
+
+Every notebook prints a **split fingerprint**, a 10-character hash of which scan is in which split with which label. Same fingerprint = same split, so compare it with your teammates' before comparing results. The results JSON files in `data/results/` record it too.
 
 ### 1-preprocessing.ipynb
 
@@ -74,23 +91,26 @@ How scans are linked. Both hash links compare images only, regardless of which b
 | val | 26 | 53 | 213 | 292 |
 | test | 25 | 53 | 212 | 290 |
 
-Settings live in the second cell: split fractions, `PHASH_MAX_DIST` (duplicate threshold), `GROUP_MAX_DIST` (same-split threshold), `RESCANS_AS_AUGMENTATION`, `MAX_RESCANS_PER_MAP`, `TARGET_HEIGHT`, `ROTATE_LANDSCAPE`, `DENOISE_STRENGTH`, `EXCLUDE_WORKS`. After changing `PHASH_MAX_DIST`, check the merges in section 4: there's a sheet of borderline pairs on both sides of the threshold, and a pager through every merged map, most suspicious first.
+With a frozen split, only the resize, pad and denoise settings change the output; the split and dedup settings below then only affect the review figures. Settings live in the second cell: `REBUILD_SPLIT`, split fractions, `PHASH_MAX_DIST` (duplicate threshold), `GROUP_MAX_DIST` (same-split threshold), `RESCANS_AS_AUGMENTATION`, `MAX_RESCANS_PER_MAP`, `TARGET_HEIGHT`, `ROTATE_LANDSCAPE`, `DENOISE_STRENGTH`, `EXCLUDE_WORKS`. After changing `PHASH_MAX_DIST`, check the merges in section 4: there's a sheet of borderline pairs on both sides of the threshold, and a pager through every merged map, most suspicious first.
 
 ### 2-augment.ipynb
 
-- **How many copies:** tops each class up toward the size of the largest one, counting rescans and the largest class's own minimum copies. Copies go first to the maps with the fewest samples, and synthetic copies never take a map past 5 samples. A map with more rescans than that keeps them but gets no synthetic copies.
-- **Large gets copies too:** every class, Large included, gets copies for at least 25% of its maps. Otherwise augmentation artifacts would only appear in Small and Medium and become a shortcut for predicting them.
-- **Transforms:** all scale-preserving. Flips, a tilt of up to 2 deg (more would push floor-plan walls out of the 0/90 deg HOG bins that identify Small), zoom of up to 7%, shift of up to 4%, contrast and brightness. No big zooms, since how zoomed-in a map looks is what we're classifying.
-- **Safe to re-run:** the previous augmentation is replaced, never added to.
+- **How many copies:** `TARGET_TRAIN_TOTAL = 5000` (Vasha's suggestion), split equally: every class ends with exactly `ceil(5000 / 3)` = 1,667 train rows, counting kept scans, rescans and synthetic copies. Copies go first to the maps with the fewest samples, so they're spread evenly over a class's maps. `MAX_COPIES_PER_MAP = 20` is only a safety cap: if a class can't reach the target under it, the notebook stops and says what to raise, rather than leaving the classes unequal.
+- **All three classes get copies:** Large gets copies for about two thirds of its maps. (`MIN_AUG_FRACTION` still guarantees at least 25%, in case the target is ever set low.)
+- **Transforms:** all keep the map's apparent scale. Flips, a tilt of up to 5 deg (like a crooked scan; exposed corners get the page's paper color), zoom of up to 7%, shift of up to 4%, contrast, brightness, gamma (darker or lighter ink), and paper warmth (yellowed vs. white paper). No crops or big zooms, since how zoomed-in a map looks is what we're classifying.
+- **Equal counts make `class_weight="balanced"` a no-op:** it gives every row weight 1, so in notebooks 3-6 it scores exactly like no weighting.
+- **Safe to re-run:** the previous augmentation is replaced, never added to. The split never changes here; the notebook checks the split fingerprint before and after.
+
+With the 10-27 split (the numbers above), the train set comes out as:
 
 | Train rows | Small | Medium | Large | Total |
 |---|---|---|---|---|
 | original (kept scans) | 118 | 248 | 992 | 1,358 |
 | rescan | 24 | 138 | 0 | 162 |
-| augmented | 448 | 854 | 248 | 1,550 |
-| **total** | **590** | **1,240** | **1,240** | **3,070** |
+| augmented | 1,525 | 1,281 | 675 | 3,481 |
+| **total** | **1,667** | **1,667** | **1,667** | **5,001** |
 
-Medium and Large finish even. Small stops at 590: it has only 118 train maps, each capped at 5 samples, and no Small map had more than 4 extra scans. Use `class_weight="balanced"` in the classifiers to cover the rest.
+Small gets the most copies per map: about 14 samples for each of its 118 maps (at most 15), against about 7 for Medium and 1-2 for Large. Copies add variety, not new floor plans, so Small's effective sample size is still 118 maps.
 
 ### Features
 
@@ -110,6 +130,10 @@ data/ecommons/                                         raw download
   MARC/Bax_LiteratureMaps_MARC/MARC_info_parallel.csv          book metadata (title, author, year)
   CLIP/, non-map_sample/                                       other outputs from the paper
 
+splits/                                                committed to git (see "The same split on every machine")
+  frozen_split.csv          one row per input scan: how it's used, its map, label, group and split
+  frozen_split.json         split fingerprint, the settings that made it, package versions
+
 data/processed/                                        written by 1-preprocessing and 2-augment
   train/<class>/            kept scan of each train map
   val/<class>/              kept scans only
@@ -117,10 +141,10 @@ data/processed/                                        written by 1-preprocessin
   train_rescans/<class>/    other scans of train maps
   train_aug/<class>/        synthetic copies (<image_id>__augNN.png)
   manifest.csv              one row per image above - the source of truth for labels and splits
-  duplicates.csv            every raw image, its duplicate cluster, and whether it was kept
+  duplicates.csv            every raw image, its duplicate cluster, how it's used, and its group's split
   dedup_review.png          borderline duplicate pairs
   split_summary.csv         maps per split x class
-  preprocess_config.json    preprocessing settings and target size
+  preprocess_config.json    preprocessing settings, target size and split fingerprint
   augment_config.json       augmentation settings
 
 data/samples/               three sample maps for feature_checkpoint.ipynb (not in git)
@@ -170,12 +194,12 @@ Asks whether features that say nothing about what is drawn (brightness, amount o
 **Part 1 - baselines (no features).** Both learn only the class mix, from one row per train map, since the full train split is rebalanced. They have nothing to tune, so they are scored on val and test directly.
 - **Majority class:** always predicts Large. About 73% accuracy but only about 0.28 macro-F1, since Small and Medium score 0.
 - **Random guessing** in proportion to the real class mix, averaged over 1,000 random runs: about 0.33 macro-F1, with 95% of runs between about 0.28 and 0.39 on test. This is the bar a model has to clear.
-- Don't fit `DummyClassifier(strategy="most_frequent")` on all train rows: augmentation ties Medium with Large (1,240 rows each), the tie goes to the first class, and it predicts Medium.
+- Don't fit `DummyClassifier(strategy="most_frequent")` on all train rows: augmentation ties all three classes (1,667 rows each), the tie goes to the first class, and it would predict Small.
 
 **Part 2 - logistic regression (no hidden layers) on simple features**, no edges or texture.
 - **Features tried:** `pixels_32` (32 x 48 thumbnail), `hist_norm` (brightness histogram after contrast-stretching), `ink` (Otsu ink fraction, overall + 6 x 4 grid), `color` (saturation beyond the paper's tint), and `combo` (hist_norm + ink + color, 76 numbers).
-- **Tuning:** feature, class weighting (none or `balanced`) and C, all chosen on the validation set; test used once at the end. Picking the best of 130 settings on one val set can be optimistic.
-- **Results (11/4 run):** `combo`, no class weighting, C = 0.22. Balanced weighting lost for every feature (best: 0.31 on val). Val macro-F1 0.376, test macro-F1 0.385 (bootstrap 95% CI 0.33 - 0.44), test accuracy 61%. That is at the top edge of the random-guessing range: only about 4% of random runs score that high, so it is a weak signal at best.
+- **Tuning:** feature, class weighting (none or `balanced`, now identical because train is balanced) and C, all chosen on the validation set; test used once at the end. Picking the best of 130 settings on one val set can be optimistic.
+- **Results (11/4 run, on the earlier 3,070-row train set):** `combo`, no class weighting, C = 0.22. Balanced weighting lost for every feature (best: 0.31 on val). Val macro-F1 0.376, test macro-F1 0.385 (bootstrap 95% CI 0.33 - 0.44), test accuracy 61%. That is at the top edge of the random-guessing range: only about 4% of random runs score that high, so it is a weak signal at best.
 - **Per class (test F1, model vs. random guessing):** Medium 0.36 vs 0.18 - nearly all of the edge, likely because city maps carry the most ink. Large 0.74 vs 0.73, no better than guessing. Small 0.05 vs 0.08, worse (1 of 25 correct): floor plans differ in structure (straight walls, right angles), which these features can't see. Structure-based features (HOG, LBP, lines) are what should separate them.
 - **Cost:** about 27 ms per image, almost all of it computing features; fitting takes under 0.1 s.
 
@@ -194,7 +218,10 @@ Takes several minutes to run, mostly computing features and the 130-fit search.
 - `scripts/0-Cierra_EDA.ipynb` - image sizes, channels, class balance
 - `scripts/0-Cierra_Duplicate_Check.ipynb` - finds works scanned multiple times, using the MARC metadata
 - `scripts/1-preprocessing.ipynb` - de-duplication, grouped split, resizing -> `data/processed/`
-- `scripts/2-augment.ipynb` - minority-class augmentation of the train split
+- `scripts/2-augment.ipynb` - augmentation of the train split to about 5,000 rows, equal per class
+- `splits/` - the frozen train/val/test split (committed, so every machine uses the same one)
 - `scripts/feature_checkpoint.ipynb` - proof-of-concept HOG, LBP, and line/corner features
 - `scripts/feature_checkpoint.pptx` - feature checkpoint slides
 - `scripts/3-simple_model.ipynb` - baselines (majority class, random guessing) and simple-feature logistic regression
+- `scripts/4-pretrained_feature.ipynb` - ResNet-50 embeddings + logistic regression
+- `scripts/5-DINOv2.ipynb`, `scripts/6-DINOv3.ipynb` - DINOv2 / DINOv3 embeddings + logistic regression
