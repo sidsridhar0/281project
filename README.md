@@ -101,7 +101,7 @@ With a frozen split, only the resize, pad and denoise settings change the output
 - **Equal counts make `class_weight="balanced"` a no-op:** it gives every row weight 1, so in notebooks 3-6 it scores exactly like no weighting.
 - **Safe to re-run:** the previous augmentation is replaced, never added to. The split never changes here; the notebook checks the split fingerprint before and after.
 
-With the 10-27 split (the numbers above), the train set comes out as:
+With the frozen split (the numbers above), the train set is:
 
 | Train rows | Small | Medium | Large | Total |
 |---|---|---|---|---|
@@ -111,6 +111,8 @@ With the 10-27 split (the numbers above), the train set comes out as:
 | **total** | **1,667** | **1,667** | **1,667** | **5,001** |
 
 Small gets the most copies per map: about 14 samples for each of its 118 maps (at most 15), against about 7 for Medium and 1-2 for Large. Copies add variety, not new floor plans, so Small's effective sample size is still 118 maps.
+
+**Did it help?** Not so far. Compared with the 11/4 run on the same split (590 / 1,240 / 1,240 rows, tilts up to 2 deg), neither the simple features nor ResNet-50 scored better on val or test (ResNet-50 test macro-F1: 0.481 then, 0.461 now). The models' over-prediction moved from Medium to Small, and ResNet-50's two-step errors (Small called Large or the reverse) went from 20 to 44. See section 16 of `4-pretrained_feature`.
 
 ### Features
 
@@ -199,9 +201,10 @@ Asks whether features that say nothing about what is drawn (brightness, amount o
 **Part 2 - logistic regression (no hidden layers) on simple features**, no edges or texture.
 - **Features tried:** `pixels_32` (32 x 48 thumbnail), `hist_norm` (brightness histogram after contrast-stretching), `ink` (Otsu ink fraction, overall + 6 x 4 grid), `color` (saturation beyond the paper's tint), and `combo` (hist_norm + ink + color, 76 numbers).
 - **Tuning:** feature, class weighting (none or `balanced`, now identical because train is balanced) and C, all chosen on the validation set; test used once at the end. Picking the best of 130 settings on one val set can be optimistic.
-- **Results (11/4 run, on the earlier 3,070-row train set):** `combo`, no class weighting, C = 0.22. Balanced weighting lost for every feature (best: 0.31 on val). Val macro-F1 0.376, test macro-F1 0.385 (bootstrap 95% CI 0.33 - 0.44), test accuracy 61%. That is at the top edge of the random-guessing range: only about 4% of random runs score that high, so it is a weak signal at best.
-- **Per class (test F1, model vs. random guessing):** Medium 0.36 vs 0.18 - nearly all of the edge, likely because city maps carry the most ink. Large 0.74 vs 0.73, no better than guessing. Small 0.05 vs 0.08, worse (1 of 25 correct): floor plans differ in structure (straight walls, right angles), which these features can't see. Structure-based features (HOG, LBP, lines) are what should separate them.
-- **Cost:** about 27 ms per image, almost all of it computing features; fitting takes under 0.1 s.
+- **Results (11/12 run):** `ink` (25 numbers), no class weighting, C = 2.2e-3. Val macro-F1 0.350, test macro-F1 0.383 (bootstrap 95% CI 0.32 - 0.44), test accuracy 43%. That is at the top edge of the random-guessing range: about 5% of random runs score that high, so it is a weak signal at best.
+- **Per class (test F1, model vs. random guessing):** Medium 0.43 vs 0.18, likely because city maps carry the most ink. Small 0.19 vs 0.08. Large 0.54 vs 0.73, far worse: trained on equal class counts, the model calls 81 of the 212 Large test maps Small (it predicts Small 105 times for 25 Small maps). Floor plans differ in structure (straight walls, right angles), which these features can't see; structure-based and pretrained features are what should separate them.
+- **Compared with the 11/4 run** (same split, train rebalanced only to 590 / 1,240 / 1,240): `combo` scored 0.385 on test with 61% accuracy but almost never predicted Small (F1 0.05). The larger, equal augmentation left macro-F1 where it was and moved the errors from Small-called-Large to Large-called-Small.
+- **Cost:** about 22 ms per image for `ink`, almost all of it computing the feature; fitting takes under 0.1 s.
 
 Takes several minutes to run, mostly computing features and the 130-fit search.
 
